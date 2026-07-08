@@ -46,7 +46,10 @@ import {
   AlertCircle,
   Settings,
   Sparkles,
-  Brain
+  Brain,
+  Download,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 
 export default function Home() {
@@ -82,6 +85,7 @@ export default function Home() {
   const [customWhitelist, setCustomWhitelist] = useState<string[]>([]);
   const [customSystemPrompt, setCustomSystemPrompt] = useState("");
   const [citationHistory, setCitationHistory] = useState<string[]>([]);
+  const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(false);
   
   // Search pagination & AI query states
   const [searchOffset, setSearchOffset] = useState(0);
@@ -343,6 +347,20 @@ export default function Home() {
   const handleClearHistory = () => {
     setCitationHistory([]);
     localStorage.removeItem("papertrack_citation_history");
+  };
+
+  const handleExportHistory = () => {
+    if (citationHistory.length === 0) return;
+    const text = citationHistory.join("\r\n\r\n");
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `papertrack-citations-${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Render initial loader
@@ -783,46 +801,70 @@ export default function Home() {
             )}
 
             {/* CITATION HISTORY PANEL */}
-            <div className="p-6 rounded-2xl bg-[#181818] border border-[#2a2a2a] shadow-xl mt-8">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold tracking-tight flex items-center gap-2">
-                  <BookOpen className="w-5 h-5 text-[#1DB954]" /> Citações Recentes (Histórico)
-                </h3>
-                {citationHistory.length > 0 && (
+            <div className="p-6 rounded-2xl bg-[#181818] border border-[#2a2a2a] shadow-xl mt-8 flex flex-col transition duration-300">
+              <div className="flex items-center justify-between flex-wrap gap-2 pb-2">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-5 h-5 text-[#1DB954]" />
+                  <h3 className="text-lg font-bold tracking-tight">Citações Recentes (Histórico)</h3>
                   <button
-                    onClick={handleClearHistory}
-                    className="text-xs text-red-400 hover:text-red-500 font-semibold hover:underline"
+                    onClick={() => setIsHistoryCollapsed(!isHistoryCollapsed)}
+                    className="p-1 rounded bg-[#282828] hover:bg-[#383838] transition duration-200 text-[#b3b3b3] hover:text-white ml-1"
+                    title={isHistoryCollapsed ? "Expandir histórico" : "Minimizar histórico"}
                   >
-                    Limpar Histórico
+                    {isHistoryCollapsed ? (
+                      <ChevronDown className="w-4 h-4" />
+                    ) : (
+                      <ChevronUp className="w-4 h-4" />
+                    )}
                   </button>
+                </div>
+                {!isHistoryCollapsed && citationHistory.length > 0 && (
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleExportHistory}
+                      className="text-xs text-[#1DB954] hover:text-[#1ed760] font-semibold hover:underline flex items-center gap-1 bg-[#1DB954]/5 border border-[#1DB954]/20 hover:border-[#1ed760]/30 px-3 py-1 rounded transition duration-300"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Exportar Todas (.txt)
+                    </button>
+                    <button
+                      onClick={handleClearHistory}
+                      className="text-xs text-red-400 hover:text-red-500 font-semibold hover:underline"
+                    >
+                      Limpar Histórico
+                    </button>
+                  </div>
                 )}
               </div>
               
-              {citationHistory.length === 0 ? (
-                <p className="text-xs text-[#7f7f7f] text-center py-6 bg-[#121212] rounded-xl border border-dashed border-[#2a2a2a]">
-                  Nenhuma citação copiada recentemente. Suas citações copiadas aparecerão aqui.
-                </p>
-              ) : (
-                <div className="flex flex-col gap-3 max-h-80 overflow-y-auto pr-1">
-                  {citationHistory.map((citation, index) => (
-                    <div key={index} className="bg-[#121212] p-4 rounded-xl border border-[#2a2a2a] flex items-start justify-between gap-4 group">
-                      <p className="text-xs text-gray-300 leading-relaxed font-mono select-all truncate flex-grow">
-                        {citation}
-                      </p>
-                      <button
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(citation);
-                          } catch (err) {
-                            console.error(err);
-                          }
-                        }}
-                        className="text-[10px] text-[#1DB954] hover:text-[#1ed760] font-bold border border-[#1DB954]/20 hover:border-[#1ed760]/40 px-2.5 py-1 rounded bg-[#1DB954]/5 flex-shrink-0 transition duration-300"
-                      >
-                        Copiar
-                      </button>
+              {!isHistoryCollapsed && (
+                <div className="mt-4 border-t border-[#2a2a2a] pt-4 animate-in fade-in duration-200">
+                  {citationHistory.length === 0 ? (
+                    <p className="text-xs text-[#7f7f7f] text-center py-6 bg-[#121212] rounded-xl border border-dashed border-[#2a2a2a]">
+                      Nenhuma citação copiada recentemente. Suas citações copiadas aparecerão aqui.
+                    </p>
+                  ) : (
+                    <div className="flex flex-col gap-3 max-h-80 overflow-y-auto pr-1">
+                      {citationHistory.map((citation, index) => (
+                        <div key={index} className="bg-[#121212] p-4 rounded-xl border border-[#2a2a2a] flex items-start justify-between gap-4 group">
+                          <p className="text-xs text-gray-300 leading-relaxed font-mono select-all truncate flex-grow">
+                            {citation}
+                          </p>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(citation);
+                              } catch (err) {
+                                console.error(err);
+                              }
+                            }}
+                            className="text-[10px] text-[#1DB954] hover:text-[#1ed760] font-bold border border-[#1DB954]/20 hover:border-[#1ed760]/40 px-2.5 py-1 rounded bg-[#1DB954]/5 flex-shrink-0 transition duration-300"
+                          >
+                            Copiar
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
               )}
             </div>
