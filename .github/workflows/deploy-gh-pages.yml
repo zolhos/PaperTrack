@@ -41,13 +41,16 @@ jobs:
         working-directory: papertrack-app
         env:
           NEXT_PUBLIC_SPOTIFY_CLIENT_ID: ${{ secrets.NEXT_PUBLIC_SPOTIFY_CLIENT_ID || '381fcef8a3374cfab9d3cdb0dde7bccb' }}
-          NEXT_PUBLIC_SPOTIFY_REDIRECT_URI: ${{ secrets.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI || 'https://diegolhos.github.io/PaperTrack' }}
+          NEXT_PUBLIC_SPOTIFY_REDIRECT_URI: ${{ secrets.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI || 'https://zolhos.github.io/PaperTrack/' }}
 
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: papertrack-app/out
+          name: papertrack-pages-${{ github.run_id }}
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: papertrack-pages-${{ github.run_id }}
