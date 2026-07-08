@@ -783,19 +783,26 @@ export default function Home() {
             )}
 
             {/* CITATION HISTORY PANEL */}
-            {citationHistory.length > 0 && (
-              <div className="p-6 rounded-2xl bg-[#181818] border border-[#2a2a2a] shadow-xl mt-8">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-bold tracking-tight flex items-center gap-2">
-                    <BookOpen className="w-5 h-5 text-[#1DB954]" /> Citações Recentes (Histórico)
-                  </h3>
+            <div className="p-6 rounded-2xl bg-[#181818] border border-[#2a2a2a] shadow-xl mt-8">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold tracking-tight flex items-center gap-2">
+                  <BookOpen className="w-5 h-5 text-[#1DB954]" /> Citações Recentes (Histórico)
+                </h3>
+                {citationHistory.length > 0 && (
                   <button
                     onClick={handleClearHistory}
                     className="text-xs text-red-400 hover:text-red-500 font-semibold hover:underline"
                   >
                     Limpar Histórico
                   </button>
-                </div>
+                )}
+              </div>
+              
+              {citationHistory.length === 0 ? (
+                <p className="text-xs text-[#7f7f7f] text-center py-6 bg-[#121212] rounded-xl border border-dashed border-[#2a2a2a]">
+                  Nenhuma citação copiada recentemente. Suas citações copiadas aparecerão aqui.
+                </p>
+              ) : (
                 <div className="flex flex-col gap-3 max-h-80 overflow-y-auto pr-1">
                   {citationHistory.map((citation, index) => (
                     <div key={index} className="bg-[#121212] p-4 rounded-xl border border-[#2a2a2a] flex items-start justify-between gap-4 group">
@@ -817,8 +824,8 @@ export default function Home() {
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
       </main>
