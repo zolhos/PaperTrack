@@ -45,10 +45,17 @@ export interface ScoredEpisode {
 /**
  * Evaluates an episode and returns a score representing its academic relevance.
  */
-export function scoreEpisode(episode: SpotifyEpisode): ScoredEpisode {
+export function scoreEpisode(
+  episode: SpotifyEpisode,
+  customWhitelist?: Set<string>
+): ScoredEpisode {
   let score = 0;
   const matchedKeywords: string[] = [];
-  const isWhitelisted = episode.show?.id ? WHITELISTED_SHOW_IDS.has(episode.show.id) : false;
+  
+  const showId = episode.show?.id;
+  const isWhitelisted = showId
+    ? WHITELISTED_SHOW_IDS.has(showId) || (customWhitelist?.has(showId) ?? false)
+    : false;
 
   // 1. Whitelist bonus
   if (isWhitelisted) {
@@ -100,10 +107,11 @@ export function scoreEpisode(episode: SpotifyEpisode): ScoredEpisode {
  */
 export function filterAndRankEpisodes(
   episodes: SpotifyEpisode[],
-  minScore = 5
+  minScore = 5,
+  customWhitelist?: Set<string>
 ): ScoredEpisode[] {
   return episodes
-    .map((ep) => scoreEpisode(ep))
+    .map((ep) => scoreEpisode(ep, customWhitelist))
     .filter((scored) => scored.isWhitelisted || scored.score >= minScore)
     .sort((a, b) => b.score - a.score);
 }

@@ -27,6 +27,8 @@ import {
   formatRefinedAbntCitation,
   formatRefinedApaCitation,
   DeepSeekRefinedData,
+  DEFAULT_SYSTEM_PROMPT,
+  enhanceSearchQuery,
 } from "../lib/deepseek";
 import {
   Search,
@@ -75,6 +77,19 @@ export default function Home() {
   const [refineError, setRefineError] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Enhancements states
+  const [customWhitelist, setCustomWhitelist] = useState<string[]>([]);
+  const [customSystemPrompt, setCustomSystemPrompt] = useState("");
+  const [citationHistory, setCitationHistory] = useState<string[]>([]);
+  
+  // Search pagination & AI query states
+  const [searchOffset, setSearchOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [useAiSearch, setUseAiSearch] = useState(false);
+  const [isEnhancingQuery, setIsEnhancingQuery] = useState(false);
+  const [enhancedQueryText, setEnhancedQueryText] = useState("");
+  const [newWhitelistId, setNewWhitelistId] = useState("");
   
   // Load initial auth state
   useEffect(() => {
@@ -117,12 +132,33 @@ export default function Home() {
     if (savedKey) {
       setCustomDeepSeekKey(savedKey);
     }
+
+    // Load custom whitelist from localStorage
+    const savedWhitelist = localStorage.getItem("papertrack_custom_whitelist");
+    if (savedWhitelist) {
+      try {
+        setCustomWhitelist(JSON.parse(savedWhitelist));
+      } catch (_) {}
+    }
+
+    // Load custom system prompt from localStorage
+    const savedPrompt = localStorage.getItem("papertrack_custom_prompt");
+    setCustomSystemPrompt(savedPrompt || DEFAULT_SYSTEM_PROMPT);
+
+    // Load citation history from localStorage
+    const savedHistory = localStorage.getItem("papertrack_citation_history");
+    if (savedHistory) {
+      try {
+        setCitationHistory(JSON.parse(savedHistory));
+      } catch (_) {}
+    }
   }, []);
 
-  // Update filtered & ranked episodes when minScore, onlyWhitelisted, or raw episodes change
+  // Update filtered & ranked episodes when minScore, onlyWhitelisted, customWhitelist, or raw episodes change
   useEffect(() => {
     if (episodes.length > 0) {
-      let filtered = episodes.map((ep) => scoreEpisode(ep));
+      const whitelistSet = new Set(customWhitelist);
+      let filtered = episodes.map((ep) => scoreEpisode(ep, whitelistSet));
       
       if (onlyWhitelisted) {
         filtered = filtered.filter((se) => se.isWhitelisted);
@@ -135,7 +171,7 @@ export default function Home() {
     } else {
       setScoredEpisodes([]);
     }
-  }, [episodes, minScore, onlyWhitelisted]);
+  }, [episodes, minScore, onlyWhitelisted, customWhitelist]);
 
   const handleLogin = async () => {
     await redirectToSpotifyAuth();
@@ -148,17 +184,18 @@ export default function Home() {
     setScoredEpisodes([]);
   };
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!searchQuery.trim()) return;
-
+  const fetchEpisodes = async (queryToSearch: string, offset: number, append: boolean) => {
     setIsLoadingSearch(true);
     setSearchError("");
     try {
-      // Fetch more items than needed so we have enough headroom after filters
-      const results = await searchSpotifyEpisodes(searchQuery, 10);
-      setEpisodes(results);
-      if (results.length === 0) {
+      const results = await searchSpotifyEpisodes(queryToSearch, 10, offset);
+      if (append) {
+        setEpisodes((prev) => [...prev, ...results]);
+      } else {
+        setEpisodes(results);
+      }
+      setHasMore(results.length === 10);
+      if (!append && results.length === 0) {
         setSearchError("Nenhum episódio encontrado para a busca especificada.");
       }
     } catch (err: any) {
@@ -167,6 +204,42 @@ export default function Home() {
     } finally {
       setIsLoadingSearch(false);
     }
+  };
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    setEpisodes([]);
+    setScoredEpisodes([]);
+    setSearchOffset(0);
+    setEnhancedQueryText("");
+    
+    let activeQuery = searchQuery.trim();
+
+    if (useAiSearch) {
+      setIsEnhancingQuery(true);
+      setSearchError("");
+      try {
+        const enhanced = await enhanceSearchQuery(activeQuery, customDeepSeekKey);
+        setEnhancedQueryText(enhanced);
+        activeQuery = enhanced;
+      } catch (err: any) {
+        console.error(err);
+        setSearchError(`Falha ao otimizar consulta com IA: ${err.message}. Prosseguindo com busca original.`);
+      } finally {
+        setIsEnhancingQuery(false);
+      }
+    }
+
+    await fetchEpisodes(activeQuery, 0, false);
+  };
+
+  const handleLoadMore = async () => {
+    const nextOffset = searchOffset + 10;
+    setSearchOffset(nextOffset);
+    const activeQuery = enhancedQueryText || searchQuery.trim();
+    await fetchEpisodes(activeQuery, nextOffset, true);
   };
 
   const handleCopy = async (text: string, type: "abnt" | "apa") => {
@@ -179,6 +252,14 @@ export default function Home() {
         setCopiedApa(true);
         setTimeout(() => setCopiedApa(false), 2000);
       }
+
+      setCitationHistory((prev) => {
+        const cleaned = text.trim();
+        const filtered = prev.filter((item) => item !== cleaned);
+        const updated = [cleaned, ...filtered].slice(0, 20);
+        localStorage.setItem("papertrack_citation_history", JSON.stringify(updated));
+        return updated;
+      });
     } catch (err) {
       console.error("Falha ao copiar texto: ", err);
     }
@@ -218,7 +299,8 @@ export default function Home() {
         episode.name,
         episode.show?.name || "Podcast",
         episode.description,
-        customDeepSeekKey
+        customDeepSeekKey,
+        customSystemPrompt
       );
       setRefinedCitations((prev) => ({
         ...prev,
@@ -230,6 +312,37 @@ export default function Home() {
     } finally {
       setIsRefining(false);
     }
+  };
+
+  const handleAddWhitelistId = (showId: string) => {
+    const cleaned = showId.trim();
+    if (!cleaned) return;
+    if (customWhitelist.includes(cleaned)) return;
+    const updated = [...customWhitelist, cleaned];
+    setCustomWhitelist(updated);
+    localStorage.setItem("papertrack_custom_whitelist", JSON.stringify(updated));
+  };
+
+  const handleRemoveWhitelistId = (showId: string) => {
+    const updated = customWhitelist.filter((id) => id !== showId);
+    setCustomWhitelist(updated);
+    localStorage.setItem("papertrack_custom_whitelist", JSON.stringify(updated));
+  };
+
+  const handleSaveSystemPrompt = (prompt: string) => {
+    const cleaned = prompt.trim();
+    setCustomSystemPrompt(cleaned);
+    localStorage.setItem("papertrack_custom_prompt", cleaned);
+  };
+
+  const handleResetSystemPrompt = () => {
+    setCustomSystemPrompt(DEFAULT_SYSTEM_PROMPT);
+    localStorage.removeItem("papertrack_custom_prompt");
+  };
+
+  const handleClearHistory = () => {
+    setCitationHistory([]);
+    localStorage.removeItem("papertrack_citation_history");
   };
 
   // Render initial loader
@@ -287,41 +400,124 @@ export default function Home() {
 
       {/* SETTINGS PANEL */}
       {showSettings && isAuthenticated && (
-        <div className="bg-[#181818] border-b border-[#2a2a2a] px-6 py-4 animate-in slide-in-from-top duration-200">
-          <div className="max-w-xl mx-auto">
-            <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
-              <Brain className="w-4 h-4 text-[#1DB954]" /> Configuração da API do DeepSeek
-            </h3>
-            <p className="text-xs text-[#b3b3b3] mb-4">
-              Para usar o refinamento com inteligência artificial, você pode definir sua chave da API do DeepSeek abaixo. 
-              Ela será salva localmente no seu navegador e usada apenas para solicitações diretas ao DeepSeek.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-3">
-              <input
-                type="password"
-                value={customDeepSeekKey}
-                onChange={(e) => setCustomDeepSeekKey(e.target.value)}
-                placeholder={process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY ? "Chave configurada via .env (opcional substituir)" : "Insira sua chave (sk-...)"}
-                className="flex-grow bg-[#282828] text-white border border-[#2a2a2a] rounded-lg px-4 py-2 text-sm outline-none focus:border-[#1DB954]"
+        <div className="bg-[#181818] border-b border-[#2a2a2a] px-6 py-6 animate-in slide-in-from-top duration-200">
+          <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8">
+            
+            {/* Left Column: API Key & Whitelist */}
+            <div className="flex flex-col gap-6">
+              {/* DeepSeek API Key */}
+              <div>
+                <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+                  <Brain className="w-4 h-4 text-[#1DB954]" /> Chave da API do DeepSeek
+                </h3>
+                <p className="text-xs text-[#b3b3b3] mb-3">
+                  Salva localmente no navegador para chamadas diretas ao DeepSeek AI (refinamento e busca melhorada).
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={customDeepSeekKey}
+                    onChange={(e) => setCustomDeepSeekKey(e.target.value)}
+                    placeholder={process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY ? "Chave local ativa (.env)" : "Insira sua chave (sk-...)"}
+                    className="flex-grow bg-[#282828] text-white border border-[#2a2a2a] rounded-lg px-3 py-1.5 text-xs outline-none focus:border-[#1DB954]"
+                  />
+                  <button
+                    onClick={() => handleSaveDeepSeekKey(customDeepSeekKey)}
+                    className="bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold text-xs px-4 py-1.5 rounded-lg transition duration-300 flex items-center justify-center gap-1.5"
+                  >
+                    {saveSuccess ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" /> Salvo!
+                      </>
+                    ) : (
+                      "Salvar"
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Custom Whitelist */}
+              <div className="border-t border-[#2a2a2a] pt-6">
+                <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+                  <SlidersHorizontal className="w-4 h-4 text-[#1DB954]" /> White List Personalizada (IDs de Podcasts)
+                </h3>
+                <p className="text-xs text-[#b3b3b3] mb-3">
+                  Cadastre IDs de shows do Spotify para que recebam o bônus de pontuação (+100) automaticamente.
+                </p>
+                <div className="flex gap-2 mb-3">
+                  <input
+                    type="text"
+                    value={newWhitelistId}
+                    onChange={(e) => setNewWhitelistId(e.target.value)}
+                    placeholder="Cole o ID do show do Spotify"
+                    className="flex-grow bg-[#282828] text-white border border-[#2a2a2a] rounded-lg px-3 py-1.5 text-xs outline-none focus:border-[#1DB954]"
+                  />
+                  <button
+                    onClick={() => {
+                      handleAddWhitelistId(newWhitelistId);
+                      setNewWhitelistId("");
+                    }}
+                    className="bg-white text-black hover:bg-[#b3b3b3] font-bold text-xs px-4 py-1.5 rounded-lg transition duration-300"
+                  >
+                    Adicionar
+                  </button>
+                </div>
+
+                {/* Whitelist Show List */}
+                <div className="bg-[#121212] border border-[#2a2a2a] rounded-xl p-3 max-h-40 overflow-y-auto">
+                  {customWhitelist.length === 0 ? (
+                    <p className="text-xs text-[#7f7f7f] text-center py-2">
+                      Sua White List personalizada está vazia.
+                    </p>
+                  ) : (
+                    <ul className="flex flex-col gap-1.5">
+                      {customWhitelist.map((id) => (
+                        <li key={id} className="flex items-center justify-between text-xs bg-[#181818] px-2.5 py-1.5 rounded border border-[#2a2a2a]">
+                          <span className="font-mono text-gray-300 truncate mr-2" title={id}>{id}</span>
+                          <button
+                            onClick={() => handleRemoveWhitelistId(id)}
+                            className="text-red-400 hover:text-red-500 font-bold hover:underline"
+                          >
+                            Remover
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column: System Prompt Editor */}
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Brain className="w-4 h-4 text-[#1DB954]" /> Editor de Prompt do DeepSeek
+                </h3>
+                <button
+                  onClick={handleResetSystemPrompt}
+                  className="text-xs text-[#b3b3b3] hover:text-white hover:underline flex items-center gap-1"
+                >
+                  <ListRestart className="w-3.5 h-3.5" /> Resetar Padrão
+                </button>
+              </div>
+              <p className="text-xs text-[#b3b3b3]">
+                Ajuste as instruções de sistema passadas ao modelo de IA para extrair os metadados de citação e formatar as notas explicativas.
+              </p>
+              <textarea
+                value={customSystemPrompt}
+                onChange={(e) => setCustomSystemPrompt(e.target.value)}
+                rows={8}
+                className="w-full bg-[#282828] text-white border border-[#2a2a2a] rounded-xl p-3 text-xs outline-none focus:border-[#1DB954] resize-none font-mono leading-relaxed"
               />
               <button
-                onClick={() => handleSaveDeepSeekKey(customDeepSeekKey)}
-                className="bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold text-sm px-6 py-2 rounded-lg transition duration-300 flex items-center justify-center gap-2"
+                onClick={() => handleSaveSystemPrompt(customSystemPrompt)}
+                className="bg-white text-black hover:bg-[#b3b3b3] font-bold text-xs py-2 rounded-xl transition duration-300 self-end px-6"
               >
-                {saveSuccess ? (
-                  <>
-                    <Check className="w-4 h-4" /> Salvo!
-                  </>
-                ) : (
-                  "Salvar"
-                )}
+                Salvar Prompt
               </button>
             </div>
-            {process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY && (
-              <p className="text-[10px] text-[#1DB954] mt-2">
-                ✓ Uma chave de desenvolvimento local está configurada no ambiente (arquivo .env).
-              </p>
-            )}
+
           </div>
         </div>
       )}
@@ -375,29 +571,59 @@ export default function Home() {
             
             {/* SEARCH AND FILTERS */}
             <div className="p-6 rounded-2xl bg-[#181818] border border-[#2a2a2a] shadow-xl">
-              <form onSubmit={handleSearch} className="flex flex-col sm:flex-row gap-4 mb-6">
-                <div className="relative flex-grow">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#b3b3b3]" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Busque por temas (ex: genômica, buraco negro, história oral)..."
-                    className="w-full bg-[#282828] text-white border border-transparent rounded-full py-4 pl-12 pr-6 outline-none focus:border-[#1DB954] transition duration-300 font-medium placeholder-[#7f7f7f]"
-                  />
+              <form onSubmit={handleSearch} className="flex flex-col gap-4 mb-6">
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="relative flex-grow">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#b3b3b3]" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Busque por temas (ex: genômica, buraco negro, história oral)..."
+                      className="w-full bg-[#282828] text-white border border-transparent rounded-full py-4 pl-12 pr-6 outline-none focus:border-[#1DB954] transition duration-300 font-medium placeholder-[#7f7f7f]"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isLoadingSearch || isEnhancingQuery}
+                    className="bg-[#1DB954] hover:bg-[#1ed760] disabled:bg-[#3e3e3e] text-black font-bold px-8 py-4 rounded-full transition duration-300 flex items-center justify-center gap-2"
+                  >
+                    {isLoadingSearch || isEnhancingQuery ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      "Pesquisar"
+                    )}
+                  </button>
                 </div>
-                <button
-                  type="submit"
-                  disabled={isLoadingSearch}
-                  className="bg-[#1DB954] hover:bg-[#1ed760] disabled:bg-[#3e3e3e] text-black font-bold px-8 py-4 rounded-full transition duration-300 flex items-center justify-center gap-2"
-                >
-                  {isLoadingSearch ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    "Pesquisar"
-                  )}
-                </button>
+
+                <div className="flex items-center gap-2 px-2">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={useAiSearch}
+                      onChange={(e) => setUseAiSearch(e.target.checked)}
+                      className="rounded border-[#2a2a2a] text-[#1DB954] focus:ring-0 focus:ring-offset-0 bg-[#282828] w-4 h-4 cursor-pointer"
+                    />
+                    <span className="flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5 text-[#1DB954]" /> Busca Melhorada com IA (DeepSeek)
+                    </span>
+                  </label>
+                </div>
               </form>
+
+              {isEnhancingQuery && (
+                <div className="text-xs text-[#1DB954] mb-4 flex items-center gap-2 animate-pulse px-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>DeepSeek otimizando termos de busca para o contexto científico...</span>
+                </div>
+              )}
+
+              {enhancedQueryText && (
+                <div className="text-xs text-[#b3b3b3] mb-4 bg-[#121212] px-4 py-2.5 rounded-lg border border-[#2a2a2a] flex items-center gap-2">
+                  <Sparkles className="w-3.5 h-3.5 text-[#1DB954] flex-shrink-0" />
+                  <span>Busca otimizada por IA: <strong>{enhancedQueryText}</strong></span>
+                </div>
+              )}
 
               {/* Advanced Controls */}
               <div className="border-t border-[#2a2a2a] pt-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -529,6 +755,64 @@ export default function Home() {
                       >
                         <BookOpen className="w-4 h-4" />
                         Gerar Citação
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Pagination Button */}
+                {hasMore && (
+                  <div className="flex justify-center mt-6">
+                    <button
+                      onClick={handleLoadMore}
+                      disabled={isLoadingSearch}
+                      className="bg-[#282828] hover:bg-[#383838] border border-[#2a2a2a] text-white text-xs font-bold px-8 py-3 rounded-full transition duration-300 flex items-center gap-2"
+                    >
+                      {isLoadingSearch ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin text-[#1DB954]" />
+                          <span>Carregando mais...</span>
+                        </>
+                      ) : (
+                        <span>Carregar Mais Resultados</span>
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* CITATION HISTORY PANEL */}
+            {citationHistory.length > 0 && (
+              <div className="p-6 rounded-2xl bg-[#181818] border border-[#2a2a2a] shadow-xl mt-8">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold tracking-tight flex items-center gap-2">
+                    <BookOpen className="w-5 h-5 text-[#1DB954]" /> Citações Recentes (Histórico)
+                  </h3>
+                  <button
+                    onClick={handleClearHistory}
+                    className="text-xs text-red-400 hover:text-red-500 font-semibold hover:underline"
+                  >
+                    Limpar Histórico
+                  </button>
+                </div>
+                <div className="flex flex-col gap-3 max-h-80 overflow-y-auto pr-1">
+                  {citationHistory.map((citation, index) => (
+                    <div key={index} className="bg-[#121212] p-4 rounded-xl border border-[#2a2a2a] flex items-start justify-between gap-4 group">
+                      <p className="text-xs text-gray-300 leading-relaxed font-mono select-all truncate flex-grow">
+                        {citation}
+                      </p>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(citation);
+                          } catch (err) {
+                            console.error(err);
+                          }
+                        }}
+                        className="text-[10px] text-[#1DB954] hover:text-[#1ed760] font-bold border border-[#1DB954]/20 hover:border-[#1ed760]/40 px-2.5 py-1 rounded bg-[#1DB954]/5 flex-shrink-0 transition duration-300"
+                      >
+                        Copiar
                       </button>
                     </div>
                   ))}

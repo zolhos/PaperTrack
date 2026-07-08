@@ -12,7 +12,7 @@ export interface DeepSeekRefinedData {
   nota: string | null;
 }
 
-const SYSTEM_PROMPT = `Você é um assistente especializado em biblioteconomia e normas da ABNT e APA.
+export const DEFAULT_SYSTEM_PROMPT = `Você é um assistente especializado em biblioteconomia e normas da ABNT e APA.
 Sua tarefa é analisar o título do episódio, o nome do podcast e a descrição do episódio para extrair metadados úteis para citações bibliográficas.
 
 Você deve extrair e retornar um objeto JSON estrito contendo as seguintes chaves:
@@ -33,7 +33,8 @@ export async function refineCitationsWithDeepSeek(
   title: string,
   showName: string,
   description: string,
-  customApiKey?: string
+  customApiKey?: string,
+  customSystemPrompt?: string
 ): Promise<DeepSeekRefinedData> {
   // 1. Resolve API Key (Priority: custom key entered in UI -> env variable)
   const apiKey = customApiKey?.trim() || process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY;
@@ -60,7 +61,7 @@ Descrição: ${description}`;
         messages: [
           {
             role: "system",
-            content: SYSTEM_PROMPT,
+            content: customSystemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT,
           },
           {
             role: "user",
@@ -156,4 +157,73 @@ export function formatRefinedApaCitation(
     : "";
 
   return `${host} (Host). (${releaseDateFormatted}). ${title}${guestPart} [Audio podcast episode]. In ${showName}. Spotify. ${url}`;
+}
+
+/**
+ * Calls DeepSeek to optimize a generic query by adding academic/scientific keywords.
+ */
+export async function enhanceSearchQuery(
+  query: string,
+  customApiKey?: string
+): Promise<string> {
+  const apiKey = customApiKey?.trim() || process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(
+      "Nenhuma chave da API do DeepSeek encontrada. Por favor, adicione sua chave nas configurações para usar a busca melhorada com IA."
+    );
+  }
+
+  const ENHANCE_SYSTEM_PROMPT = `Você é um assistente de pesquisa científica. Sua tarefa é receber um termo de busca genérico do usuário e retornar uma consulta otimizada (query) para busca de podcasts acadêmicos.
+Expanda o termo adicionando palavras-chave científicas correlatas que costumam aparecer no contexto acadêmico. 
+Mantenha a consulta simples, sem aspas, operadores lógicos complexos ou explicações adicionais. Retorne apenas os termos de busca otimizados (máximo de 5 a 6 palavras).
+Exemplo de entrada: "física"
+Exemplo de saída: "física quântica relatividade partículas astrofísica"`;
+
+  try {
+    const response = await fetch(DEEPSEEK_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [
+          {
+            role: "system",
+            content: ENHANCE_SYSTEM_PROMPT,
+          },
+          {
+            role: "user",
+            content: `Termo genérico: ${query}`,
+          },
+        ],
+        temperature: 0.3,
+      }),
+    });
+
+    if (!response.ok) {
+      let errMsg = `Status ${response.status}`;
+      try {
+        const errData = await response.json();
+        if (errData.error?.message) {
+          errMsg += `: ${errData.error.message}`;
+        }
+      } catch (_) {}
+      throw new Error(`Chamada ao DeepSeek falhou: ${errMsg}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+
+    if (!content) {
+      throw new Error("Resposta vazia da API do DeepSeek.");
+    }
+
+    return content.trim().replace(/^["']|["']$/g, ""); // Strip any quotes returned by the model
+  } catch (error: any) {
+    console.error("Erro ao melhorar busca com DeepSeek:", error);
+    throw new Error(error.message || "Falha na comunicação com a API do DeepSeek.");
+  }
 }
