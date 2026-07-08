@@ -16,7 +16,7 @@ const MONTHS_ABNT = [
 /**
  * Parses a Spotify release date string (YYYY-MM-DD, YYYY-MM, or YYYY) into components.
  */
-function parseReleaseDate(dateStr: string): { year: string; monthNameAPA: string; monthNameABNT: string; day: string } {
+export function parseReleaseDate(dateStr: string): { year: string; monthNameAPA: string; monthNameABNT: string; day: string } {
   const parts = dateStr.split("-");
   const year = parts[0] || new Date().getFullYear().toString();
   let monthNameAPA = "";
@@ -41,7 +41,7 @@ function parseReleaseDate(dateStr: string): { year: string; monthNameAPA: string
 /**
  * Formats access date for ABNT (today's date by default).
  */
-function getAbntAccessDate(date = new Date()): string {
+export function getAbntAccessDate(date = new Date()): string {
   const day = date.getDate();
   const monthIdx = date.getMonth();
   const year = date.getFullYear();

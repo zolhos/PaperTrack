@@ -17,7 +17,17 @@ import {
 import {
   generateAbntCitation,
   generateApaCitation,
+  formatHostForAbnt,
+  formatHostForApa,
+  parseReleaseDate,
+  getAbntAccessDate,
 } from "../lib/citation";
+import {
+  refineCitationsWithDeepSeek,
+  formatRefinedAbntCitation,
+  formatRefinedApaCitation,
+  DeepSeekRefinedData,
+} from "../lib/deepseek";
 import {
   Search,
   BookOpen,
@@ -31,7 +41,10 @@ import {
   ListRestart,
   HelpCircle,
   Hash,
-  AlertCircle
+  AlertCircle,
+  Settings,
+  Sparkles,
+  Brain
 } from "lucide-react";
 
 export default function Home() {
@@ -54,6 +67,14 @@ export default function Home() {
   const [selectedEpisode, setSelectedEpisode] = useState<SpotifyEpisode | null>(null);
   const [copiedAbnt, setCopiedAbnt] = useState(false);
   const [copiedApa, setCopiedApa] = useState(false);
+
+  // DeepSeek AI states
+  const [customDeepSeekKey, setCustomDeepSeekKey] = useState("");
+  const [isRefining, setIsRefining] = useState(false);
+  const [refinedCitations, setRefinedCitations] = useState<Record<string, DeepSeekRefinedData>>({});
+  const [refineError, setRefineError] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   
   // Load initial auth state
   useEffect(() => {
@@ -90,6 +111,12 @@ export default function Home() {
     };
     
     checkAuth();
+
+    // Load saved DeepSeek API key from sessionStorage
+    const savedKey = sessionStorage.getItem("deepseek_api_key");
+    if (savedKey) {
+      setCustomDeepSeekKey(savedKey);
+    }
   }, []);
 
   // Update filtered & ranked episodes when minScore, onlyWhitelisted, or raw episodes change
@@ -176,6 +203,35 @@ export default function Home() {
     return dateStr;
   };
 
+  const handleSaveDeepSeekKey = (key: string) => {
+    sessionStorage.setItem("deepseek_api_key", key.trim());
+    setCustomDeepSeekKey(key.trim());
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 2000);
+  };
+
+  const handleRefineCitation = async (episode: SpotifyEpisode) => {
+    setIsRefining(true);
+    setRefineError("");
+    try {
+      const data = await refineCitationsWithDeepSeek(
+        episode.name,
+        episode.show?.name || "Podcast",
+        episode.description,
+        customDeepSeekKey
+      );
+      setRefinedCitations((prev) => ({
+        ...prev,
+        [episode.id]: data,
+      }));
+    } catch (err: any) {
+      console.error(err);
+      setRefineError(err.message || "Erro de processamento da IA.");
+    } finally {
+      setIsRefining(false);
+    }
+  };
+
   // Render initial loader
   if (isAuthenticated === null || isAuthenticating) {
     return (
@@ -204,16 +260,71 @@ export default function Home() {
           </div>
         </div>
 
-        {isAuthenticated && (
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#2a2a2a] hover:border-red-500 hover:text-red-500 transition duration-300 text-sm font-medium"
-          >
-            <LogOut className="w-4 h-4" />
-            <span className="hidden sm:inline">Desconectar</span>
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {isAuthenticated && (
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className={`flex items-center justify-center p-2 rounded-full border transition duration-300 ${
+                showSettings ? "border-[#1DB954] text-[#1DB954]" : "border-[#2a2a2a] hover:border-[#b3b3b3] text-[#b3b3b3] hover:text-white"
+              }`}
+              title="Configurações da API"
+            >
+              <Settings className="w-5 h-5" />
+            </button>
+          )}
+
+          {isAuthenticated && (
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#2a2a2a] hover:border-red-500 hover:text-red-500 transition duration-300 text-sm font-medium"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">Desconectar</span>
+            </button>
+          )}
+        </div>
       </header>
+
+      {/* SETTINGS PANEL */}
+      {showSettings && isAuthenticated && (
+        <div className="bg-[#181818] border-b border-[#2a2a2a] px-6 py-4 animate-in slide-in-from-top duration-200">
+          <div className="max-w-xl mx-auto">
+            <h3 className="text-sm font-bold text-white mb-2 flex items-center gap-2">
+              <Brain className="w-4 h-4 text-[#1DB954]" /> Configuração da API do DeepSeek
+            </h3>
+            <p className="text-xs text-[#b3b3b3] mb-4">
+              Para usar o refinamento com inteligência artificial, você pode definir sua chave da API do DeepSeek abaixo. 
+              Ela será salva localmente no seu navegador e usada apenas para solicitações diretas ao DeepSeek.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="password"
+                value={customDeepSeekKey}
+                onChange={(e) => setCustomDeepSeekKey(e.target.value)}
+                placeholder={process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY ? "Chave configurada via .env (opcional substituir)" : "Insira sua chave (sk-...)"}
+                className="flex-grow bg-[#282828] text-white border border-[#2a2a2a] rounded-lg px-4 py-2 text-sm outline-none focus:border-[#1DB954]"
+              />
+              <button
+                onClick={() => handleSaveDeepSeekKey(customDeepSeekKey)}
+                className="bg-[#1DB954] hover:bg-[#1ed760] text-black font-bold text-sm px-6 py-2 rounded-lg transition duration-300 flex items-center justify-center gap-2"
+              >
+                {saveSuccess ? (
+                  <>
+                    <Check className="w-4 h-4" /> Salvo!
+                  </>
+                ) : (
+                  "Salvar"
+                )}
+              </button>
+            </div>
+            {process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY && (
+              <p className="text-[10px] text-[#1DB954] mt-2">
+                ✓ Uma chave de desenvolvimento local está configurada no ambiente (arquivo .env).
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* MAIN CONTAINER */}
       <main className="flex-grow flex flex-col items-center px-4 py-8 max-w-6xl w-full mx-auto">
@@ -496,55 +607,155 @@ export default function Home() {
 
               {/* Right Column: Citation Generator */}
               <div className="flex-grow flex-1 flex flex-col gap-6 justify-between border-t md:border-t-0 md:border-l border-[#2a2a2a] pt-6 md:pt-0 md:pl-6">
-                <div className="flex flex-col gap-5">
-                  {/* ABNT */}
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#1DB954]">Norma ABNT</span>
-                      <button
-                        onClick={() => handleCopy(generateAbntCitation(selectedEpisode), "abnt")}
-                        className="flex items-center gap-1.5 text-xs text-[#b3b3b3] hover:text-white bg-[#282828] px-2.5 py-1 rounded transition duration-300"
-                      >
-                        {copiedAbnt ? (
-                          <>
-                            <Check className="w-3.5 h-3.5 text-[#1DB954]" /> Copiado!
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3.5 h-3.5" /> Copiar
-                          </>
-                        )}
-                      </button>
-                    </div>
-                    <div className="bg-[#121212] p-4 rounded-xl border border-[#2a2a2a] text-xs text-gray-200 leading-relaxed select-all">
-                      {generateAbntCitation(selectedEpisode)}
-                    </div>
+                
+                {/* AI Refinement Status and Actions */}
+                <div className="flex flex-col gap-3 flex-shrink-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Brain className="w-3.5 h-3.5 text-[#1DB954]" /> Refinamento com IA
+                    </span>
+                    {refinedCitations[selectedEpisode.id] && (
+                      <span className="bg-[#1DB954]/10 text-[#1DB954] text-[10px] font-bold px-2 py-0.5 rounded border border-[#1DB954]/20 flex items-center gap-1">
+                        <Sparkles className="w-3 h-3 animate-pulse" /> Refinado pelo DeepSeek
+                      </span>
+                    )}
                   </div>
 
-                  {/* APA */}
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#1DB954]">Norma APA (7ª Ed.)</span>
-                      <button
-                        onClick={() => handleCopy(generateApaCitation(selectedEpisode), "apa")}
-                        className="flex items-center gap-1.5 text-xs text-[#b3b3b3] hover:text-white bg-[#282828] px-2.5 py-1 rounded transition duration-300"
-                      >
-                        {copiedApa ? (
-                          <>
-                            <Check className="w-3.5 h-3.5 text-[#1DB954]" /> Copiado!
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3.5 h-3.5" /> Copiar
-                          </>
-                        )}
-                      </button>
+                  {/* Refine button */}
+                  {!refinedCitations[selectedEpisode.id] && (
+                    <button
+                      onClick={() => handleRefineCitation(selectedEpisode)}
+                      disabled={isRefining}
+                      className="w-full bg-[#282828] hover:bg-[#383838] border border-[#2a2a2a] disabled:bg-[#1f1f1f] text-white font-bold text-xs py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition duration-300"
+                    >
+                      {isRefining ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin text-[#1DB954]" />
+                          <span>Analisando descrição com IA...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4 text-[#1DB954]" />
+                          <span>Refinar Referência com DeepSeek</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {/* Error Display */}
+                  {refineError && (
+                    <div className="flex items-center gap-2 p-3 rounded-lg bg-red-950/20 border border-red-900/30 text-red-300 text-xs">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-500" />
+                      <span>{refineError}</span>
                     </div>
-                    <div className="bg-[#121212] p-4 rounded-xl border border-[#2a2a2a] text-xs text-gray-200 leading-relaxed select-all">
-                      {generateApaCitation(selectedEpisode)}
-                    </div>
-                  </div>
+                  )}
                 </div>
+
+                {/* Citations block */}
+                {(() => {
+                  const isRefined = !!refinedCitations[selectedEpisode.id];
+                  const refinedData = refinedCitations[selectedEpisode.id];
+
+                  // ABNT calculations
+                  let abntText = "";
+                  if (isRefined && refinedData) {
+                    const { year, monthNameABNT, day } = parseReleaseDate(selectedEpisode.release_date);
+                    const dateFormatted = day && monthNameABNT 
+                      ? `${day} ${monthNameABNT} ${year}` 
+                      : monthNameABNT 
+                        ? `${monthNameABNT} ${year}` 
+                        : year;
+                    abntText = formatRefinedAbntCitation(
+                      selectedEpisode.name,
+                      dateFormatted,
+                      selectedEpisode.external_urls.spotify,
+                      refinedData,
+                      getAbntAccessDate()
+                    );
+                  } else {
+                    abntText = generateAbntCitation(selectedEpisode);
+                  }
+
+                  // APA calculations
+                  let apaText = "";
+                  if (isRefined && refinedData) {
+                    const { year, monthNameAPA, day } = parseReleaseDate(selectedEpisode.release_date);
+                    const dateFormatted = day && monthNameAPA 
+                      ? `${year}, ${monthNameAPA} ${day}` 
+                      : monthNameAPA 
+                        ? `${year}, ${monthNameAPA}` 
+                        : year;
+                    apaText = formatRefinedApaCitation(
+                      selectedEpisode.name,
+                      dateFormatted,
+                      selectedEpisode.show?.name || "Podcast",
+                      selectedEpisode.external_urls.spotify,
+                      refinedData
+                    );
+                  } else {
+                    apaText = generateApaCitation(selectedEpisode);
+                  }
+
+                  return (
+                    <div className="flex flex-col gap-5 flex-grow">
+                      {/* ABNT */}
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-[#1DB954]">Norma ABNT</span>
+                          <button
+                            onClick={() => handleCopy(abntText, "abnt")}
+                            className="flex items-center gap-1.5 text-xs text-[#b3b3b3] hover:text-white bg-[#282828] px-2.5 py-1 rounded transition duration-300"
+                          >
+                            {copiedAbnt ? (
+                              <>
+                                <Check className="w-3.5 h-3.5 text-[#1DB954]" /> Copiado!
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5" /> Copiar
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        <div className={`p-4 rounded-xl border text-xs leading-relaxed select-all transition duration-300 ${
+                          isRefined 
+                            ? "bg-[#1db954]/5 border-[#1db954]/20 text-gray-100" 
+                            : "bg-[#121212] border-[#2a2a2a] text-gray-200"
+                        }`}>
+                          {abntText}
+                        </div>
+                      </div>
+
+                      {/* APA */}
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-[#1DB954]">Norma APA (7ª Ed.)</span>
+                          <button
+                            onClick={() => handleCopy(apaText, "apa")}
+                            className="flex items-center gap-1.5 text-xs text-[#b3b3b3] hover:text-white bg-[#282828] px-2.5 py-1 rounded transition duration-300"
+                          >
+                            {copiedApa ? (
+                              <>
+                                <Check className="w-3.5 h-3.5 text-[#1DB954]" /> Copiado!
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5" /> Copiar
+                              </>
+                            )}
+                          </button>
+                        </div>
+                        <div className={`p-4 rounded-xl border text-xs leading-relaxed select-all transition duration-300 ${
+                          isRefined 
+                            ? "bg-[#1db954]/5 border-[#1db954]/20 text-gray-100" 
+                            : "bg-[#121212] border-[#2a2a2a] text-gray-200"
+                        }`}>
+                          {apaText}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Link on Spotify */}
                 <a
